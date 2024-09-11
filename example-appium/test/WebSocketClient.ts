@@ -1,38 +1,42 @@
-import WebSocket from 'ws'
+import { WebSocket, MessageEvent } from 'ws'
 
 export class WebSocketClient {
     private socket: WebSocket
-    private pendingActions: Map<
-        string,
-        (value: void | PromiseLike<void>) => void
-    > = new Map()
+    private interceptors: Map<string, number> // To store alias and the count of intercepted messages
 
     constructor(url: string) {
         this.socket = new WebSocket(url)
+        this.interceptors = new Map<string, number>()
+    }
 
-        this.socket.on('open', () => {
-            console.log('WebSocket connection established')
-        })
+    async connect(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.socket.on('open', () => {
+                console.log('WebSocket connection established')
+                resolve()
+            })
 
-        this.socket.on('message', (data: WebSocket.MessageEvent) => {
-            const message = JSON.parse(data.toString())
-            console.log('Received message from WebSocket:', message)
+            this.socket.on('error', (error: Error) => {
+                console.error('WebSocket error:', error)
+                reject(error)
+            })
 
-            if (message.status && this.pendingActions.has(message.action)) {
-                const resolve = this.pendingActions.get(message.action)
-                if (resolve) {
-                    resolve(message.status)
-                    this.pendingActions.delete(message.action)
+            // Listen to incoming messages and update the count in the appropriate interceptor
+            this.socket.on('message', (message: MessageEvent) => {
+                let data = message as any
+                if (data instanceof Buffer) {
+                    data = data.toString()
                 }
-            }
-        })
 
-        this.socket.on('close', () => {
-            console.log('WebSocket connection closed')
-        })
-
-        this.socket.on('error', (error: Error) => {
-            console.error('WebSocket error:', error)
+                this.interceptors.forEach((count, alias) => {
+                    if (data.includes(alias)) {
+                        this.interceptors.set(alias, count + 1) // Increment the count for the alias
+                        console.log(
+                            `Intercepted message for ${alias}. Count: ${count + 1}`,
+                        )
+                    }
+                })
+            })
         })
     }
 
@@ -53,19 +57,47 @@ export class WebSocketClient {
             response,
             persist,
         }
-        await this.sendMessageWithAck('intercept', options)
+
+        this.interceptors.set(as, 0)
+
+        this.sendMessage('intercept', options)
     }
 
-    async waitForResponse(expected: string, timeout = 10000): Promise<void> {
+    async waitForResponse(
+        expected: string,
+        expectedCount: number = 1,
+        timeout = 10000,
+    ): Promise<void> {
         return new Promise((resolve, reject) => {
-            const onMessage = (message: WebSocket.MessageEvent) => {
+            const initialCount = this.interceptors.get(expected) || 0
+
+            if (initialCount >= expectedCount) {
+                console.log(
+                    `Wait for ${expected} resolved immediately. Count: ${initialCount}`,
+                )
+                resolve()
+                return
+            }
+
+            let receivedCount = initialCount
+
+            const onMessage = (message: MessageEvent) => {
                 let data = message as any
                 if (data instanceof Buffer) {
                     data = data.toString()
                 }
                 if (data.includes(expected)) {
-                    this.socket.removeListener('message', onMessage)
-                    resolve()
+                    receivedCount += 1
+                    console.log(
+                        `Received message for ${expected}. Count: ${receivedCount}`,
+                    )
+                    if (receivedCount >= expectedCount) {
+                        console.log(
+                            `Wait for ${expected} resolved after receiving message. Final Count: ${receivedCount}`,
+                        )
+                        this.socket.removeListener('message', onMessage)
+                        resolve()
+                    }
                 }
             }
 
@@ -73,31 +105,17 @@ export class WebSocketClient {
 
             setTimeout(() => {
                 this.socket.removeListener('message', onMessage)
-                reject(new Error(`Timed out waiting for response: ${expected}`))
+                reject(
+                    new Error(
+                        `Timed out waiting for response: ${expected}. Count received: ${receivedCount}`,
+                    ),
+                )
             }, timeout)
         })
     }
 
     async clearAll(): Promise<void> {
-        await this.sendMessageWithAck('clear_all', {})
-    }
-
-    private async sendMessageWithAck(
-        action: string,
-        options: any,
-    ): Promise<void> {
-        return new Promise((resolve, reject) => {
-            this.pendingActions.set(action, resolve)
-            this.sendMessage(action, options)
-
-            setTimeout(() => {
-                this.pendingActions.delete(action)
-                reject(
-                    new Error(
-                        `Timed out waiting for acknowledgment of action: ${action}`,
-                    ),
-                )
-            }, 10000)
-        })
+        this.interceptors.clear()
+        this.sendMessage('clear_all', {})
     }
 }
