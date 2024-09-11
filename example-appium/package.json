@@ -1,0 +1,21 @@
+{
+  "name": "example-appium",
+  "type": "module",
+  "devDependencies": {
+    "@wdio/appium-service": "^9.0.9",
+    "@wdio/cli": "^9.0.9",
+    "@wdio/local-runner": "^9.0.9",
+    "@wdio/mocha-framework": "^9.0.8",
+    "@wdio/spec-reporter": "^9.0.8",
+    "appium": "^2.11.3",
+    "appium-uiautomator2-driver": "^3.7.9",
+    "prettier": "^3.3.3",
+    "wdio-mochawesome-reporter": "^6.1.1"
+  },
+  "scripts": {
+    "wdio": "wdio run ./wdio.conf.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
